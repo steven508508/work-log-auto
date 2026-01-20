@@ -16,7 +16,6 @@ PROJECT_MAPPINGS = {
 
 def sanitize(event):
     subject = event.get('subject', 'No Subject')
-    # 這裡稍微放寬過濾，方便測試 (如果你確定要嚴格過濾，請把 showAs 檢查加回來)
     if event.get('isCancelled'): return None
     
     # 檢查隱私
@@ -40,7 +39,7 @@ def check_leaks(content):
             sys.exit(1)
 
 def main():
-    print("--- 開始執行同步 (Debug Mode) ---")
+    print("--- 開始執行同步 (修正時區版) ---")
     if not REFRESH_TOKEN: 
         print("Missing Refresh Token")
         sys.exit(1)
@@ -54,7 +53,6 @@ def main():
         sys.exit(1)
     
     # 2. 設定時間 (強制轉為台灣時間 UTC+8)
-    # GitHub Runner 預設是 UTC，我們手動加 8 小時
     tw_now = datetime.utcnow() + timedelta(hours=8)
     today_str = tw_now.strftime('%Y-%m-%d')
     tomorrow_str = (tw_now + timedelta(days=1)).strftime('%Y-%m-%d')
@@ -63,16 +61,18 @@ def main():
 
     # 3. 呼叫 Graph API
     url = f"https://graph.microsoft.com/v1.0/me/calendar/events?startDateTime={today_str}T00:00:00&endDateTime={tomorrow_str}T00:00:00&$top=50"
+    
+    # ★★★ 關鍵修正：將 'Taiwan Standard Time' 改為 'Taipei Standard Time' ★★★
     headers = {
         'Authorization': 'Bearer ' + result['access_token'], 
-        'Prefer': 'outlook.timezone="Taiwan Standard Time"'
+        'Prefer': 'outlook.timezone="Taipei Standard Time"'
     }
     
     res = requests.get(url, headers=headers)
     print(f"API 回傳狀態碼: {res.status_code}")
     
     if res.status_code != 200:
-        print(f"API 錯誤: {res.text}")
+        print(f"API 錯誤內容: {res.text}")
         sys.exit(1)
 
     events_data = res.json().get('value', [])
@@ -85,14 +85,14 @@ def main():
         show_as = evt.get('showAs')
         print(f"  - 檢查: [{show_as}] {subject}")
         
-        # 只過濾掉 'free'，保留 busy, tentative, oof 等
+        # 如果你想連 Free 的行程都寫入，請把下面這兩行註解掉
         if show_as == 'free':
             print("    -> Skip (Free)")
             continue
 
         safe_sub = sanitize(evt)
         if safe_sub: 
-            start_time = evt['start']['dateTime'][11:16] # 取 HH:MM
+            start_time = evt['start']['dateTime'][11:16]
             lines.append(f"- **{start_time}**: {safe_sub}")
             print(f"    -> OK (將寫入: {safe_sub})")
         else:
@@ -106,7 +106,6 @@ def main():
         
         repo = git.Repo(os.getcwd())
         
-        # 設定 Git 使用者
         repo.config_writer().set_value("user", "name", "GitHub Action").release()
         repo.config_writer().set_value("user", "email", "action@github.com").release()
         
