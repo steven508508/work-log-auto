@@ -1,0 +1,29 @@
+name: Daily Sync
+on:
+  schedule:
+    - cron: '50 15 * * *' # 每天 UTC 15:50 (台灣時間 23:50)
+  workflow_dispatch: # 允許手動測試
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 給予寫入權限
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+          
+      - name: Install dependencies
+        run: pip install msal requests GitPython
+        
+      - name: Run Script
+        env:
+          MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
+          MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
+          MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
+          MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
+        run: python daily_sync.py
