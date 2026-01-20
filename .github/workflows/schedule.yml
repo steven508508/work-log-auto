@@ -1,14 +1,18 @@
 name: Daily Sync
 on:
   schedule:
-    - cron: '50 15 * * *' # 每天 UTC 15:50 (台灣時間 23:50)
+    - cron: '50 15 * * *' # 台灣時間 23:50
   workflow_dispatch: # 允許手動測試
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    
+    # 👇【關鍵修正】一定要加這兩行權限 👇
     permissions:
-      contents: write # 給予寫入權限
+      contents: write
+    # 👆 ---------------------------- 👆
+
     steps:
       - uses: actions/checkout@v3
       
