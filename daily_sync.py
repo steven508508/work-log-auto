@@ -1,6 +1,6 @@
 import os, re, sys, requests, msal, git
 from datetime import datetime, timedelta
-import dateutil.parser # 需要確保環境有安裝 python-dateutil，通常 setup-python 會內建，若無可換手動解析
+# 移除 dateutil，改用內建字串處理，這樣就不會報錯了
 
 # 讀取 GitHub Secrets
 CLIENT_ID = os.environ.get('MS_CLIENT_ID')
@@ -18,7 +18,6 @@ PROJECT_MAPPINGS = {
 def sanitize(text):
     if not text: return "No Subject"
     
-    # 關鍵字過濾
     for kw in SENSITIVE_KEYWORDS:
         if kw.lower() in text.lower(): return "💼 Internal Task"
     
@@ -43,6 +42,7 @@ def get_calendar_events(access_token, today_str, tomorrow_str):
         'Prefer': 'outlook.timezone="Taipei Standard Time"'
     }
     res = requests.get(url, headers=headers)
+    
     if res.status_code != 200:
         print(f"行事曆 API 錯誤: {res.text}")
         return []
@@ -50,13 +50,16 @@ def get_calendar_events(access_token, today_str, tomorrow_str):
     events = []
     for evt in res.json().get('value', []):
         if evt.get('isCancelled'): continue
+        
+        # 隱私檢查
         if evt.get('sensitivity') in ['private', 'personal', 'confidential']:
             events.append(f"- **{evt['start']['dateTime'][11:16]}**: 🔒 Private Meeting")
             continue
 
         safe_sub = sanitize(evt.get('subject'))
-        # 排除 Free 且標題看起來不重要的行程
-        if evt.get('showAs') == 'free': continue 
+        
+        # 如果你想保留 Free 的行程，請註解掉下面這行
+        #if evt.get('showAs') == 'free': continue 
 
         time_str = evt['start']['dateTime'][11:16]
         events.append(f"- **{time_str}**: {safe_sub}")
@@ -68,7 +71,6 @@ def get_todo_tasks(access_token, target_date_str):
     print("--- 正在抓取 To-Do (已完成項目) ---")
     headers = {'Authorization': 'Bearer ' + access_token}
     
-    # 1. 取得所有任務清單 (Lists)
     lists_res = requests.get("https://graph.microsoft.com/v1.0/me/todo/lists", headers=headers)
     if lists_res.status_code != 200:
         print(f"To-Do List API 錯誤: {lists_res.text}")
@@ -76,22 +78,16 @@ def get_todo_tasks(access_token, target_date_str):
     
     tasks_found = []
     
-    # 2. 遍歷每一個清單，找今天完成的任務
     for task_list in lists_res.json().get('value', []):
         list_id = task_list['id']
-        # 只抓取狀態為 'completed' 的任務
         tasks_url = f"https://graph.microsoft.com/v1.0/me/todo/lists/{list_id}/tasks?$filter=status eq 'completed'"
         tasks_res = requests.get(tasks_url, headers=headers)
         
         if tasks_res.status_code == 200:
             for task in tasks_res.json().get('value', []):
-                # 檢查完成時間 (completedDateTime)
                 completed_obj = task.get('completedDateTime')
                 if completed_obj:
-                    # API 回傳的時間通常是 UTC，格式如 "2023-10-21T00:00:00"
-                    # 簡單比對日期字串的前 10 碼 (YYYY-MM-DD)
-                    # 注意：To-Do 的 completedDateTime 有時會回傳使用者當地時間，有時是 UTC
-                    # 這裡做簡單比對：只要日期字串符合 target_date_str 就算
+                    # 使用字串切割 [:10] 取出日期，不需要額外套件
                     c_date = completed_obj.get('dateTime', '')[:10]
                     
                     if c_date == target_date_str:
@@ -107,7 +103,6 @@ def main():
         print("Missing Refresh Token")
         sys.exit(1)
     
-    # 1. 換 Access Token
     app = msal.ConfidentialClientApplication(CLIENT_ID, authority=f'https://login.microsoftonline.com/{TENANT_ID}', client_credential=CLIENT_SECRET)
     result = app.acquire_token_by_refresh_token(REFRESH_TOKEN, scopes=['Calendars.Read', 'Tasks.Read'])
     
@@ -117,21 +112,19 @@ def main():
     
     token = result['access_token']
     
-    # 2. 設定時間 (強制 UTC+8)
+    # 強制 UTC+8
     tw_now = datetime.utcnow() + timedelta(hours=8)
     today_str = tw_now.strftime('%Y-%m-%d')
     tomorrow_str = (tw_now + timedelta(days=1)).strftime('%Y-%m-%d')
     print(f"目標日期: {today_str}")
 
-    # 3. 分別抓取資料
     calendar_lines = get_calendar_events(token, today_str, tomorrow_str)
     todo_lines = get_todo_tasks(token, today_str)
     
     all_lines = calendar_lines + todo_lines
 
-    # 4. 寫入檔案
     if all_lines:
-        all_lines.sort() # 排序讓畫面整齊
+        all_lines.sort()
         content = f"# {today_str} Work Log\n\n## Calendar\n"
         content += "\n".join(calendar_lines) if calendar_lines else "No events."
         
