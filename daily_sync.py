@@ -54,11 +54,24 @@ def main():
     # GitHub Actions 環境直接請求即可
     res = requests.get(url, headers={'Authorization': 'Bearer ' + result['access_token'], 'Prefer': 'outlook.timezone="Taiwan Standard Time"'})
     
-    lines = []
-    for evt in res.json().get('value', []):
-        safe_sub = sanitize(evt)
-        if safe_sub: lines.append(f"- **{evt['start']['dateTime'][11:16]}**: {safe_sub}")
+  print(f"API 回傳狀態: {res.status_code}")
+    events_data = res.json().get('value', [])
+    print(f"API 抓到了 {len(events_data)} 個行程 (包含被過濾的):")
     
+    for evt in events_data:
+        print(f"--- 檢查行程: {evt.get('subject')} ---")
+        print(f"    時間: {evt.get('start', {}).get('dateTime')}")
+        print(f"    狀態(showAs): {evt.get('showAs')}")
+        print(f"    隱私(sensitivity): {evt.get('sensitivity')}")
+        
+        # 原本的過濾邏輯
+        safe_sub = sanitize(evt)
+        if safe_sub: 
+            print("    ✅ 通過過濾！準備寫入。")
+            lines.append(f"- **{evt['start']['dateTime'][11:16]}**: {safe_sub}")
+        else:
+            print("    ❌ 被過濾掉了。")
+            
     if lines:
         lines.sort()
         content = f"# {today} Work Log\n\n" + "\n".join(lines)
