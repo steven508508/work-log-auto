@@ -1,5 +1,6 @@
 import os, re, sys, requests, msal, git
 from datetime import datetime, timedelta
+import dateutil.parser # 需要確保環境有安裝 python-dateutil，通常 setup-python 會內建，若無可換手動解析
 
 # 讀取 GitHub Secrets
 CLIENT_ID = os.environ.get('MS_CLIENT_ID')
@@ -14,22 +15,18 @@ PROJECT_MAPPINGS = {
     "Client CocaCola": "Retail Client",
 }
 
-def sanitize(event):
-    subject = event.get('subject', 'No Subject')
-    if event.get('isCancelled'): return None
-    
-    # 檢查隱私
-    if event.get('sensitivity') in ['private', 'personal', 'confidential']: return "🔒 Private Task"
+def sanitize(text):
+    if not text: return "No Subject"
     
     # 關鍵字過濾
     for kw in SENSITIVE_KEYWORDS:
-        if kw.lower() in subject.lower(): return "💼 Internal Discussion"
+        if kw.lower() in text.lower(): return "💼 Internal Task"
     
     for real, safe in PROJECT_MAPPINGS.items():
-        subject = subject.replace(real, safe)
+        text = text.replace(real, safe)
         
-    subject = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '[Contact]', subject)
-    return subject
+    text = re.sub(r'[\w\.-]+@[\w\.-]+\.\w+', '[Contact]', text)
+    return text
 
 def check_leaks(content):
     secrets = [CLIENT_SECRET, REFRESH_TOKEN]
@@ -38,13 +35,79 @@ def check_leaks(content):
             print("!!! Security Alert: Secret leak detected !!!")
             sys.exit(1)
 
+def get_calendar_events(access_token, today_str, tomorrow_str):
+    print("--- 正在抓取行事曆 ---")
+    url = f"https://graph.microsoft.com/v1.0/me/calendar/events?startDateTime={today_str}T00:00:00&endDateTime={tomorrow_str}T00:00:00&$top=50"
+    headers = {
+        'Authorization': 'Bearer ' + access_token, 
+        'Prefer': 'outlook.timezone="Taipei Standard Time"'
+    }
+    res = requests.get(url, headers=headers)
+    if res.status_code != 200:
+        print(f"行事曆 API 錯誤: {res.text}")
+        return []
+
+    events = []
+    for evt in res.json().get('value', []):
+        if evt.get('isCancelled'): continue
+        if evt.get('sensitivity') in ['private', 'personal', 'confidential']:
+            events.append(f"- **{evt['start']['dateTime'][11:16]}**: 🔒 Private Meeting")
+            continue
+
+        safe_sub = sanitize(evt.get('subject'))
+        # 排除 Free 且標題看起來不重要的行程
+        if evt.get('showAs') == 'free': continue 
+
+        time_str = evt['start']['dateTime'][11:16]
+        events.append(f"- **{time_str}**: {safe_sub}")
+    
+    print(f"找到 {len(events)} 個行事曆項目")
+    return events
+
+def get_todo_tasks(access_token, target_date_str):
+    print("--- 正在抓取 To-Do (已完成項目) ---")
+    headers = {'Authorization': 'Bearer ' + access_token}
+    
+    # 1. 取得所有任務清單 (Lists)
+    lists_res = requests.get("https://graph.microsoft.com/v1.0/me/todo/lists", headers=headers)
+    if lists_res.status_code != 200:
+        print(f"To-Do List API 錯誤: {lists_res.text}")
+        return []
+    
+    tasks_found = []
+    
+    # 2. 遍歷每一個清單，找今天完成的任務
+    for task_list in lists_res.json().get('value', []):
+        list_id = task_list['id']
+        # 只抓取狀態為 'completed' 的任務
+        tasks_url = f"https://graph.microsoft.com/v1.0/me/todo/lists/{list_id}/tasks?$filter=status eq 'completed'"
+        tasks_res = requests.get(tasks_url, headers=headers)
+        
+        if tasks_res.status_code == 200:
+            for task in tasks_res.json().get('value', []):
+                # 檢查完成時間 (completedDateTime)
+                completed_obj = task.get('completedDateTime')
+                if completed_obj:
+                    # API 回傳的時間通常是 UTC，格式如 "2023-10-21T00:00:00"
+                    # 簡單比對日期字串的前 10 碼 (YYYY-MM-DD)
+                    # 注意：To-Do 的 completedDateTime 有時會回傳使用者當地時間，有時是 UTC
+                    # 這裡做簡單比對：只要日期字串符合 target_date_str 就算
+                    c_date = completed_obj.get('dateTime', '')[:10]
+                    
+                    if c_date == target_date_str:
+                        safe_title = sanitize(task.get('title'))
+                        tasks_found.append(f"- ✅ **Completed**: {safe_title}")
+    
+    print(f"找到 {len(tasks_found)} 個已完成任務")
+    return tasks_found
+
 def main():
-    print("--- 開始執行同步 (修正時區版) ---")
+    print("--- 開始執行同步 (行事曆 + To-Do) ---")
     if not REFRESH_TOKEN: 
         print("Missing Refresh Token")
         sys.exit(1)
     
-    # 1. 取得 Access Token
+    # 1. 換 Access Token
     app = msal.ConfidentialClientApplication(CLIENT_ID, authority=f'https://login.microsoftonline.com/{TENANT_ID}', client_credential=CLIENT_SECRET)
     result = app.acquire_token_by_refresh_token(REFRESH_TOKEN, scopes=['Calendars.Read', 'Tasks.Read'])
     
@@ -52,60 +115,32 @@ def main():
         print(f"Token Error: {result.get('error')}")
         sys.exit(1)
     
-    # 2. 設定時間 (強制轉為台灣時間 UTC+8)
+    token = result['access_token']
+    
+    # 2. 設定時間 (強制 UTC+8)
     tw_now = datetime.utcnow() + timedelta(hours=8)
     today_str = tw_now.strftime('%Y-%m-%d')
     tomorrow_str = (tw_now + timedelta(days=1)).strftime('%Y-%m-%d')
-    
-    print(f"台灣時間: {tw_now} (查詢目標日期: {today_str})")
+    print(f"目標日期: {today_str}")
 
-    # 3. 呼叫 Graph API
-    url = f"https://graph.microsoft.com/v1.0/me/calendar/events?startDateTime={today_str}T00:00:00&endDateTime={tomorrow_str}T00:00:00&$top=50"
+    # 3. 分別抓取資料
+    calendar_lines = get_calendar_events(token, today_str, tomorrow_str)
+    todo_lines = get_todo_tasks(token, today_str)
     
-    # ★★★ 關鍵修正：將 'Taiwan Standard Time' 改為 'Taipei Standard Time' ★★★
-    headers = {
-        'Authorization': 'Bearer ' + result['access_token'], 
-        'Prefer': 'outlook.timezone="Taipei Standard Time"'
-    }
-    
-    res = requests.get(url, headers=headers)
-    print(f"API 回傳狀態碼: {res.status_code}")
-    
-    if res.status_code != 200:
-        print(f"API 錯誤內容: {res.text}")
-        sys.exit(1)
+    all_lines = calendar_lines + todo_lines
 
-    events_data = res.json().get('value', [])
-    print(f"共抓取到 {len(events_data)} 個原始行程")
-
-    # 4. 處理資料
-    lines = []
-    for evt in events_data:
-        subject = evt.get('subject', 'No Subject')
-        show_as = evt.get('showAs')
-        print(f"  - 檢查: [{show_as}] {subject}")
+    # 4. 寫入檔案
+    if all_lines:
+        all_lines.sort() # 排序讓畫面整齊
+        content = f"# {today_str} Work Log\n\n## Calendar\n"
+        content += "\n".join(calendar_lines) if calendar_lines else "No events."
         
-        # 如果你想連 Free 的行程都寫入，請把下面這兩行註解掉
-        if show_as == 'free':
-            print("    -> Skip (Free)")
-            continue
-
-        safe_sub = sanitize(evt)
-        if safe_sub: 
-            start_time = evt['start']['dateTime'][11:16]
-            lines.append(f"- **{start_time}**: {safe_sub}")
-            print(f"    -> OK (將寫入: {safe_sub})")
-        else:
-            print("    -> Skip (Sanitize returned None)")
-
-    # 5. 寫入檔案與 Git 上傳
-    if lines:
-        lines.sort()
-        content = f"# {today_str} Work Log\n\n" + "\n".join(lines)
+        content += "\n\n## To-Do Tasks\n"
+        content += "\n".join(todo_lines) if todo_lines else "No tasks completed."
+        
         check_leaks(content)
         
         repo = git.Repo(os.getcwd())
-        
         repo.config_writer().set_value("user", "name", "GitHub Action").release()
         repo.config_writer().set_value("user", "email", "action@github.com").release()
         
@@ -120,12 +155,12 @@ def main():
         if repo.is_dirty(untracked_files=True):
             repo.index.commit(f"Log: {today_str}")
             origin = repo.remote(name='origin')
-            push_info = origin.push()
+            origin.push()
             print("Git Push 完成。")
         else:
             print("沒有變更需要 Commit。")
     else:
-        print("沒有符合條件的行程，跳過寫入。")
+        print("今天沒有行事曆也沒有完成的任務。")
 
 if __name__ == "__main__":
     main()
