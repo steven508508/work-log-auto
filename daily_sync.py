@@ -150,8 +150,8 @@ def main():
         check_leaks(content)
         
         repo = git.Repo(os.getcwd())
-        repo.config_writer().set_value("user", "name", "GitHub Action").release()
-        repo.config_writer().set_value("user", "email", "action@github.com").release()
+        repo.config_writer().set_value("user", "name", "steven508508").release()
+        repo.config_writer().set_value("user", "email", "82710704+steven508508@users.noreply.github.com").release()
         
         log_dir = os.path.join(os.getcwd(), "logs")
         os.makedirs(log_dir, exist_ok=True)
