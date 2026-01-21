@@ -1,6 +1,7 @@
 name: Daily Sync
 on:
   schedule:
+    - cron: '30 13 * * *'
     - cron: '50 15 * * *' # 台灣時間 23:50
   workflow_dispatch: # 允許手動測試
 
