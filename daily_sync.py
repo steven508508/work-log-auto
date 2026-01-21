@@ -6,6 +6,7 @@ CLIENT_ID = os.environ.get('MS_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('MS_CLIENT_SECRET')
 TENANT_ID = os.environ.get('MS_TENANT_ID')
 REFRESH_TOKEN = os.environ.get('MS_REFRESH_TOKEN')
+GH_PAT = os.environ.get('GH_PAT') # 讀取萬能鑰匙
 
 # 過濾關鍵字設定
 SENSITIVE_KEYWORDS = ["Salary", "Review", "Interview", "Confidential", "Offer", "HR", "Bank"]
@@ -24,7 +25,7 @@ def sanitize(text):
     return text
 
 def check_leaks(content):
-    secrets = [CLIENT_SECRET, REFRESH_TOKEN]
+    secrets = [CLIENT_SECRET, REFRESH_TOKEN, GH_PAT]
     for s in secrets:
         if s and s in content: 
             print("!!! Security Alert: Secret leak detected !!!")
@@ -62,57 +63,41 @@ def get_todo_tasks(access_token, target_date_str):
     print("\n--- [2/2] 正在抓取 To-Do (已完成項目) ---")
     headers = {'Authorization': 'Bearer ' + access_token}
     
-    # 1. 取得任務清單
     lists_res = requests.get("https://graph.microsoft.com/v1.0/me/todo/lists", headers=headers)
     if lists_res.status_code != 200:
         print(f"❌ To-Do List API 錯誤: {lists_res.text}")
         return []
     
     tasks_found = []
-    
-    # 2. 遍歷清單
     for task_list in lists_res.json().get('value', []):
         list_name = task_list.get('displayName', 'Unknown List')
         list_id = task_list['id']
-        # print(f"  > 掃描清單: {list_name}") # 除錯用，如果太多清單可註解掉
-        
-        # 抓取「已完成」的任務
         tasks_url = f"https://graph.microsoft.com/v1.0/me/todo/lists/{list_id}/tasks?$filter=status eq 'completed'"
         tasks_res = requests.get(tasks_url, headers=headers)
         
         if tasks_res.status_code == 200:
             for task in tasks_res.json().get('value', []):
                 completed_obj = task.get('completedDateTime')
-                
                 if completed_obj:
-                    # === ⏰ 核心修正：時區轉換 ===
-                    raw_time = completed_obj.get('dateTime', '') # 格式通常是 2023-01-21T05:30:00.0000000
-                    
+                    # 時區轉換邏輯
+                    raw_time = completed_obj.get('dateTime', '')
                     try:
-                        # 1. 去掉小數點後的秒數 (有的有，有的沒有)
-                        clean_time = raw_time.split('.')[0] 
-                        # 2. 解析成時間物件
+                        clean_time = raw_time.split('.')[0]
                         dt_utc = datetime.strptime(clean_time, "%Y-%m-%dT%H:%M:%S")
-                        # 3. 加 8 小時轉成台灣時間
                         dt_tw = dt_utc + timedelta(hours=8)
-                        # 4. 轉回日期字串
                         task_date_str = dt_tw.strftime('%Y-%m-%d')
                         
-                        # print(f"    - 檢查任務: {task.get('title')} (原始: {raw_time} -> 台灣: {task_date_str})")
-
                         if task_date_str == target_date_str:
                             safe_title = sanitize(task.get('title'))
                             tasks_found.append(f"- ✅ **Completed**: {safe_title} ({list_name})")
-                            print(f"      ★ 抓到了！符合今天日期: {safe_title}")
-                            
                     except Exception as e:
-                        print(f"      ⚠️ 時間解析失敗: {raw_time}, 錯誤: {e}")
+                        pass
                         
     print(f"✅ 找到 {len(tasks_found)} 個符合日期的完成任務")
     return tasks_found
 
 def main():
-    print("--- 開始執行同步 (修正時區版) ---")
+    print("--- 開始執行同步 (使用 PAT 權限版) ---")
     if not REFRESH_TOKEN: 
         print("Missing Refresh Token")
         sys.exit(1)
@@ -140,18 +125,20 @@ def main():
     if all_lines:
         all_lines.sort()
         content = f"# {today_str} Work Log\n\n"
+        if calendar_lines: content += "## 📅 Calendar\n" + "\n".join(calendar_lines) + "\n\n"
+        if todo_lines: content += "## ✅ To-Do Tasks\n" + "\n".join(todo_lines) + "\n"
         
-        if calendar_lines:
-            content += "## 📅 Calendar\n" + "\n".join(calendar_lines) + "\n\n"
-        
-        if todo_lines:
-            content += "## ✅ To-Do Tasks\n" + "\n".join(todo_lines) + "\n"
-            
         check_leaks(content)
         
+        # === Git 操作區塊 (PAT 核心修改) ===
         repo = git.Repo(os.getcwd())
+        
+        # 👇👇👇 請務必修改這兩行，換成你的帳號 👇👇👇
+        # Name: 你的 GitHub 登入帳號 (例如: Kevin123)
+        # Email: 你的專用隱私 Email (例如: 1234+Kevin123@users.noreply.github.com)
         repo.config_writer().set_value("user", "name", "steven508508").release()
         repo.config_writer().set_value("user", "email", "82710704+steven508508@users.noreply.github.com").release()
+        # 👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆
         
         log_dir = os.path.join(os.getcwd(), "logs")
         os.makedirs(log_dir, exist_ok=True)
@@ -163,6 +150,15 @@ def main():
         repo.index.add([path])
         if repo.is_dirty(untracked_files=True):
             repo.index.commit(f"Log: {today_str}")
+            
+            # 使用 PAT 替換遠端 URL 進行驗證
+            remote_url = repo.remotes.origin.url
+            if GH_PAT and remote_url.startswith("https://"):
+                # 組合格式: https://oauth2:你的TOKEN@github.com/User/Repo.git
+                new_url = remote_url.replace("https://", f"https://oauth2:{GH_PAT}@")
+                repo.remotes.origin.set_url(new_url)
+                print("已切換為 PAT 權限模式推送")
+            
             origin = repo.remote(name='origin')
             origin.push()
             print("Git Push 完成。")
