@@ -17,7 +17,9 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
         with:
-          fetch-depth: 0
+          token: ${{ secrets.GH_PAT }} # 用你的萬能鑰匙開門
+          fetch-depth: 0               # 下載完整歷史
+          persist-credentials: false   # 下載完後不要保留權限，交給 Python 處理
       # 👆 這樣保證能下載成功
 
       - name: Set up Python
