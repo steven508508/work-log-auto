@@ -2,8 +2,8 @@ name: Daily Sync
 
 on:
   schedule:
-    - cron: '50 15 * * *' # 台灣時間 23:50
-  workflow_dispatch: # 允許手動測試
+    - cron: '50 15 * * *'
+  workflow_dispatch:
 
 jobs:
   sync:
@@ -13,14 +13,12 @@ jobs:
       contents: write
 
     steps:
+      # 👇 修改重點：這裡改回最單純的樣子，不要加 token
       - name: Checkout Code
         uses: actions/checkout@v3
         with:
-          # 👇👇👇 終極解法：在這裡就掛載你的萬能鑰匙 👇👇👇
-          token: ${{ secrets.GH_PAT }}
-          persist-credentials: true
-          fetch-depth: 0 # 完整下載 Git 歷史紀錄，避免 Commit 報錯
-          # 👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆
+          fetch-depth: 0
+      # 👆 這樣保證能下載成功
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -36,7 +34,8 @@ jobs:
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
-          # 這裡不需要傳 GH_PAT 了，因為上面 Checkout 已經驗證過了
+          # 👇 依然把鑰匙傳給 Python，我們在程式裡才用它
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: python daily_sync.py
 
       - name: Keepalive Workflow
