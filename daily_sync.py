@@ -6,7 +6,6 @@ CLIENT_ID = os.environ.get('MS_CLIENT_ID')
 CLIENT_SECRET = os.environ.get('MS_CLIENT_SECRET')
 TENANT_ID = os.environ.get('MS_TENANT_ID')
 REFRESH_TOKEN = os.environ.get('MS_REFRESH_TOKEN')
-GH_PAT = os.environ.get('GH_PAT') # 讀取萬能鑰匙
 
 # 過濾關鍵字設定
 SENSITIVE_KEYWORDS = ["Salary", "Review", "Interview", "Confidential", "Offer", "HR", "Bank"]
@@ -25,7 +24,7 @@ def sanitize(text):
     return text
 
 def check_leaks(content):
-    secrets = [CLIENT_SECRET, REFRESH_TOKEN, GH_PAT]
+    secrets = [CLIENT_SECRET, REFRESH_TOKEN]
     for s in secrets:
         if s and s in content: 
             print("!!! Security Alert: Secret leak detected !!!")
@@ -97,7 +96,7 @@ def get_todo_tasks(access_token, target_date_str):
     return tasks_found
 
 def main():
-    print("--- 開始執行同步 (使用 PAT 權限版) ---")
+    print("--- 開始執行同步 (YAML 權限託管版) ---")
     if not REFRESH_TOKEN: 
         print("Missing Refresh Token")
         sys.exit(1)
@@ -130,12 +129,12 @@ def main():
         
         check_leaks(content)
         
-        # === Git 操作區塊 (PAT 核心修改) ===
+        # === Git 操作區塊 (簡化版) ===
         repo = git.Repo(os.getcwd())
         
         # 👇👇👇 請務必修改這兩行，換成你的帳號 👇👇👇
-        # Name: 你的 GitHub 登入帳號 (例如: Kevin123)
-        # Email: 你的專用隱私 Email (例如: 1234+Kevin123@users.noreply.github.com)
+        # Name: 你的 GitHub 登入帳號
+        # Email: 你的專用隱私 Email
         repo.config_writer().set_value("user", "name", "steven508508").release()
         repo.config_writer().set_value("user", "email", "82710704+steven508508@users.noreply.github.com").release()
         # 👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆👆
@@ -151,14 +150,8 @@ def main():
         if repo.is_dirty(untracked_files=True):
             repo.index.commit(f"Log: {today_str}")
             
-            # 使用 PAT 替換遠端 URL 進行驗證
-            remote_url = repo.remotes.origin.url
-            if GH_PAT and remote_url.startswith("https://"):
-                # 組合格式: https://oauth2:你的TOKEN@github.com/User/Repo.git
-                new_url = remote_url.replace("https://", f"https://oauth2:{GH_PAT}@")
-                repo.remotes.origin.set_url(new_url)
-                print("已切換為 PAT 權限模式推送")
-            
+            # 因為 YAML 中的 checkout 步驟已經用了 PAT
+            # 這裡直接 push 就會自動繼承權限，不需要任何額外設定
             origin = repo.remote(name='origin')
             origin.push()
             print("Git Push 完成。")
