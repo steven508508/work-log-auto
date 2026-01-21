@@ -1,49 +1,40 @@
 name: Daily Sync
 
 on:
-  # 設定排程：每天 UTC 15:50 (等於台灣時間 23:50)
   schedule:
-    - cron: '50 15 * * *'
-  
-  # 允許手動按按鈕觸發 (方便測試)
-  workflow_dispatch:
+    - cron: '50 15 * * *' # 台灣時間 23:50
+  workflow_dispatch: # 允許手動測試
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     
-    # ★★★ 關鍵設定：給予寫入權限，否則無法 Push 檔案 ★★★
+    # 雖然改用 PAT，但保留這個以防萬一
     permissions:
       contents: write
 
     steps:
-      # 1. 下載程式碼到虛擬機
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      # 2. 設定 Python 環境
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
 
-      # 3. 安裝必要的套件 (注意：不需要 dateutil，因為我們改用內建功能了)
       - name: Install Dependencies
         run: pip install msal requests GitPython
 
-      # 4. 執行 Python 主程式
       - name: Run Daily Sync Script
         env:
-          # 將 GitHub Secrets 注入成環境變數
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
+          # 👇 關鍵：傳入你的萬能鑰匙 👇
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: python daily_sync.py
 
-      # 5. 【新增】防止 GitHub 自動停用排程
-      # 如果連續 50 天都沒有新的工作日誌(沒有 commit)，這個步驟會自動幫你做一個空的 commit
-      # 這樣可以避免 GitHub 因為 "Repository 60天不活躍" 而關閉你的排程
       - name: Keepalive Workflow
         uses: gautamkrishnar/keepalive-workflow@v1
         with:
