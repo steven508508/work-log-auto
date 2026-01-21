@@ -1,41 +1,33 @@
 name: Daily Sync
-
 on:
   schedule:
-    - cron: '50 15 * * *'
-  workflow_dispatch:
+    - cron: '50 15 * * *' # 台灣時間 23:50
+  workflow_dispatch: # 允許手動測試
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    
+    # 👇【關鍵修正】一定要加這兩行權限 👇
+    permissions:
+      contents: write
+    # 👆 ---------------------------- 👆
 
     steps:
-      # 👇 關鍵修改：明確指定 token 為你的 GH_PAT 👇
-      - name: Checkout Code
-        uses: actions/checkout@v3
-        with:
-          token: ${{ secrets.GH_PAT }} # 使用 Classic Token 強制下載
-          fetch-depth: 0
-          persist-credentials: true
-
+      - uses: actions/checkout@v3
+      
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.9'
-
-      - name: Install Dependencies
+          
+      - name: Install dependencies
         run: pip install msal requests GitPython
-
-      - name: Run Daily Sync Script
+        
+      - name: Run Script
         env:
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
-          GH_PAT: ${{ secrets.GH_PAT }}
         run: python daily_sync.py
-
-      - name: Keepalive Workflow
-        uses: gautamkrishnar/keepalive-workflow@v1
-        with:
-          time_elapsed: 50
