@@ -8,19 +8,15 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    
-    permissions:
-      contents: write
 
     steps:
-      # 👇 修改重點：這裡改回最單純的樣子，不要加 token
+      # 👇 關鍵修改：明確指定 token 為你的 GH_PAT 👇
       - name: Checkout Code
         uses: actions/checkout@v3
         with:
-          token: ${{ secrets.GH_PAT }} # 用你的萬能鑰匙開門
-          fetch-depth: 0               # 下載完整歷史
-          persist-credentials: false   # 下載完後不要保留權限，交給 Python 處理
-      # 👆 這樣保證能下載成功
+          token: ${{ secrets.GH_PAT }} # 使用 Classic Token 強制下載
+          fetch-depth: 0
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -36,7 +32,6 @@ jobs:
           MS_CLIENT_SECRET: ${{ secrets.MS_CLIENT_SECRET }}
           MS_TENANT_ID: ${{ secrets.MS_TENANT_ID }}
           MS_REFRESH_TOKEN: ${{ secrets.MS_REFRESH_TOKEN }}
-          # 👇 依然把鑰匙傳給 Python，我們在程式裡才用它
           GH_PAT: ${{ secrets.GH_PAT }}
         run: python daily_sync.py
 
