@@ -150,6 +150,7 @@ def main():
         check_leaks(content)
         
         repo = git.Repo(os.getcwd())
+        # 這裡設定的 email 最好與 GPG Key 的 email 一致，否則 GitHub 可能顯示 Unverified
         repo.config_writer().set_value("user", "name", "steven508508").release()
         repo.config_writer().set_value("user", "email", "82710704+steven508508@users.noreply.github.com").release()
         
@@ -162,10 +163,13 @@ def main():
         
         repo.index.add([path])
         if repo.is_dirty(untracked_files=True):
-            repo.index.commit(f"Log: {today_str}")
+            # 👇【關鍵修改】改為使用 git 指令強制加入 -S 參數進行簽署 👇
+            repo.git.commit('-S', '-m', f"Log: {today_str}")
+            # 👆 ------------------------------------------------ 👆
+            
             origin = repo.remote(name='origin')
             origin.push()
-            print("Git Push 完成。")
+            print("Git Push 完成 (已簽署)。")
         else:
             print("沒有變更需要 Commit。")
     else:
